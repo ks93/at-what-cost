@@ -1,183 +1,68 @@
+import datetime
+import json
+
+from io import StringIO
 import streamlit as st
-import numpy as np
 import pandas as pd
-from scipy.cluster import hierarchy
 import plotly.express as px
 import importlib
-from io import StringIO
 import requests
 if importlib.util.find_spec("pyodide") is not None:
-    from pyodide.http import open_url
+    import pyodide
 
-st.title("Demo - Interactive Heatmap")
+st.set_page_config(page_title="At what cost?", page_icon="⚡️", layout="centered", initial_sidebar_state="auto", menu_items=None)
+st.title("At what cost?")
+
+price_regions = {
+    "NO1": "NO1 - Oslo / Øst-Norge", 
+    "NO2": "NO2 - Kristiansand / Sør-Norge",
+    "NO3": "NO3 - Trondheim / Midt-Norge",
+    "NO4": "NO4 - Tromsø / Nord-Norge",
+    "NO5": "NO5 - Bergen / Vest-Norge"
+}
 
 @st.cache(show_spinner=False)
-def read_url(url:str, **kwargs):
-    """Read the CSV content from a URL"""
+def read_url_json(url:str, **kwargs):
+    """Read the content from a URL"""
 
     # If pyodide is available
     if importlib.util.find_spec("pyodide") is not None:
-        url_contents = open_url(url)
+        url_contents = pyodide.http.open_url(url)
     else:
         r = requests.get(url)
         url_contents = StringIO(r.text)
-
-    return pd.read_csv(
-        url_contents,
-        **kwargs
-    )
-
-def plot(
-    counts:pd.DataFrame,
-    top_n=1000,
-    norm="none",
-    method="average",
-    metric="euclidean"
-):
-
-    # Make a list of messages to display after the plot
-    msgs = []
-
-    # Normalize the raw input values
-    if norm == "prop":
-        msgs.append("Values normalized to the proportion of each column")
-        counts = counts / counts.sum()
-    elif norm == "CLR":
-        msgs.append("Values transformed to the centered-log-transform of each column")
-        counts = counts.applymap(np.log10)
-        gmean = counts.apply(lambda c: c[c > -np.inf].mean())
-        counts = counts / gmean
-        counts = counts.clip(lower=counts.apply(lambda c: c[c > -np.inf].min()).min())
-
-    # Filter by top_n
-    counts = counts.reindex(
-        index=counts.sum(
-            axis=1
-        ).sort_values(
-            ascending=False
-        ).head(
-            int(top_n)
-        ).index.values
-    )
-
-    # Order the rows and columns
-    counts = counts.reindex(
-        index=get_index_order(counts, method=method, metric=metric),
-        columns=get_index_order(counts.T, method=method, metric=metric),
-    )
-
-    # Make the plot
-    fig = px.imshow(
-        counts,
-        color_continuous_scale='RdBu_r',
-        aspect="auto",
-        labels=dict(
-            color=dict(
-                none="counts",
-                prop="proportion"
-            ).get(norm, norm),
-            x="sample"
-        )
-    )
-
-    # Display the plot
-    st.plotly_chart(fig)
-
-    # Print the messages below the plot
-    for msg in msgs:
-        st.text(msg)
+    return json.load(url_contents)
 
 
-def get_index_order(counts, method=None, metric=None):
-    """Perform linkage clustering and return the ordered index."""
-    return counts.index.values[
-        hierarchy.leaves_list(
-            hierarchy.linkage(
-                counts.values,
-                method=method,
-                metric=metric
-            )
-        )
-    ]
 
 def run():
     """Primary entrypoint."""
+    date = datetime.datetime.now()
+    st.text(date.strftime("%d/%m/%Y"))
 
-    # Read the counts specified by the user
-    counts = read_url(
-        st.sidebar.text_input(
-            "Counts Table",
-            value="https://raw.githubusercontent.com/BRITE-REU/programming-workshops/master/source/workshops/02_R/files/airway_scaledcounts.csv",
-            help="Read the abundance values from a CSV (URL) which contains a header row and index column"
-        ),
-        index_col=0
-    )
+    data = read_url_json(f"https://www.hvakosterstrommen.no/api/v1/prices/{date.year:04}/{date.month:02}-{date.day:02}_{region}.json")
+    df = pd.DataFrame(data)
+    df.drop(["EUR_per_kWh", "EXR", "time_end"], axis=1, inplace=True)
+    df["time_start"] = pd.to_datetime(df["time_start"])
+    df["time_start"] = pd.to_datetime(df["time_start"])
 
-    # Render the plot
-    plot(
-        counts,
-        top_n=st.sidebar.number_input(
-            "Show top N rows",
-            help="Only the subset of rows will be shown which have the highest average values",
-            min_value=1000,
-            max_value=counts.shape[0]
-        ),
-        norm=st.sidebar.selectbox(
-            "Normalize values by",
-            help="The raw values in the table can be normalized by the proportion of each column, or by calculating the centered log transform",
-            index=2,
-            options=[
-                "none",
-                "prop",
-                "CLR"
-            ]
-        ),
-        method=st.sidebar.selectbox(
-            "Ordering - method",
-            help="The order of rows will be set by linkage clustering using this method",
-            index=6,
-            options=[
-                "average",
-                "complete",
-                "single",
-                "weighted",
-                "centroid",
-                "median",
-                "ward"
-            ]
-        ),
-        metric=st.sidebar.selectbox(
-            "Ordering - metric",
-            help="The order of rows will be set by linkage clustering using this distance metric",
-            index=7,
-            options=[
-                "braycurtis",
-                "canberra",
-                "chebyshev",
-                "cityblock",
-                "correlation",
-                "cosine",
-                "dice",
-                "euclidean",
-                "hamming",
-                "jaccard",
-                "jensenshannon",
-                "kulczynski1",
-                "mahalanobis",
-                "matching",
-                "minkowski",
-                "rogerstanimoto",
-                "russellrao",
-                "seuclidean",
-                "sokalmichener",
-                "sokalsneath",
-                "sqeuclidean",
-                "yule"
+    fig = px.line(df, x="time_start", y="NOK_per_kWh")
+    fig.add_vline(x=date, line_color="red")
 
-           ]
-        ),
-    )
+    st.plotly_chart(fig)
+    
+
+def footer():
+    st.markdown('''<p><a href="https://www.hvakosterstrommen.no"><img src="https://ik.imagekit.io/ajdfkwyt/hva-koster-strommen/strompriser-levert-av-hvakosterstrommen_oTtWvqeiB.png" alt="Strømpriser levert av Hva koster strømmen.no" width="200" height="45"></a></p>''',
+    unsafe_allow_html=True)
+
 
 if __name__ == "__main__":
 
+    with st.sidebar:
+        region = st.selectbox("Prisområde", options=price_regions.keys(), format_func=lambda k: price_regions[k])
+        #date = st.date_input("Dato", current_date, max_value=current_date, min_value=datetime.date(2021,12,1))
+
     run()
+
+    footer()

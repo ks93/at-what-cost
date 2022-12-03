@@ -17,7 +17,7 @@
         visibility: hidden;
       }
       footer:after {
-        content:'Based on github.com/FredHutch/stlite-template'; 
+        content:'Authored by Kelvin Sundli'; 
         visibility: visible;
         display: block;
         position: relative;
@@ -35,7 +35,7 @@
             .then(
                 (app) => stlite.mount(
                     {
-                        requirements: ["click", "scipy", "plotly"],
+                        requirements: ["click", "plotly"],
                         entrypoint: "app.py",
                         files: {
                             "app.py": app
